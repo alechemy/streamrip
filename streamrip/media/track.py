@@ -22,7 +22,7 @@ logger = logging.getLogger("streamrip")
 @dataclass(slots=True)
 class Track(Media):
     meta: TrackMetadata
-    downloadable: Downloadable
+    downloadable: Downloadable | None
     config: Config
     folder: str
     # Is None if a cover doesn't exist for the track
@@ -59,39 +59,41 @@ class Track(Media):
                     )
                     await asyncio.sleep(delay)
 
-                    # Re-fetch download URL (Akamai CDN rejects stale signed URLs)
-                    if self.client is not None and self.track_id:
-                        try:
-                            self.downloadable = await self.client.get_downloadable(
-                                self.track_id, self.quality
-                            )
-                        except Exception as url_err:
-                            logger.warning(
-                                f"Failed to refresh download URL: {url_err}",
-                            )
+            # Fetch or refresh download URL
+            if self.downloadable is None or attempt > 0:
+                if self.client is not None and self.track_id:
+                    try:
+                        self.downloadable = await self.client.get_downloadable(
+                            self.track_id, self.quality
+                        )
+                    except NonStreamableError:
+                        raise
+                    except Exception as e:
+                        last_error = e
+                        continue
 
             async with global_download_semaphore(self.config.session.downloads):
                 desc = f"Track {self.meta.tracknumber}"
                 if attempt > 0:
                     desc += f" (retry {attempt})"
 
-                with get_progress_callback(
-                    self.config.session.cli.progress_bars,
-                    await self.downloadable.size(),
-                    desc,
-                ) as callback:
-                    try:
+                try:
+                    with get_progress_callback(
+                        self.config.session.cli.progress_bars,
+                        await self.downloadable.size(),
+                        desc,
+                    ) as callback:
                         await self.downloadable.download(
                             self.download_path, callback
                         )
                         return set()
-                    except Exception as e:
-                        last_error = e
-                        if os.path.exists(self.download_path):
-                            try:
-                                os.remove(self.download_path)
-                            except OSError:
-                                pass
+                except Exception as e:
+                    last_error = e
+                    if os.path.exists(self.download_path):
+                        try:
+                            os.remove(self.download_path)
+                        except OSError:
+                            pass
 
         # Try downloading an alternative version (e.g. single) with the same ISRC.
         # Some Qobuz album tracks have broken CDN entries, but the same recording
@@ -266,6 +268,7 @@ class PendingTrack(Pending):
             return None
 
         quality = self.config.session.get_source(source).quality
+        downloadable = None
         try:
             downloadable = await self.client.get_downloadable(self.id, quality)
         except NonStreamableError as e:
@@ -273,6 +276,11 @@ class PendingTrack(Pending):
                 f"Error getting downloadable data for track {meta.tracknumber} [{self.id}]: {e}"
             )
             return None
+        except Exception as e:
+            logger.warning(
+                f"Transient error getting download URL for track "
+                f"{meta.tracknumber} [{self.id}], will retry during download: {e}"
+            )
 
         downloads_config = self.config.session.downloads
         if downloads_config.disc_subdirectories and self.album.disctotal > 1:
