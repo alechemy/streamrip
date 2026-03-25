@@ -498,6 +498,13 @@ async def resume(ctx, uuid_str, list_sessions, clear):
     """Resume a previously failed download session."""
     from ..state import SESSIONS_DIR, SessionState
 
+    if uuid_str == "list":
+        list_sessions = True
+        uuid_str = None
+    elif uuid_str == "clear":
+        clear = True
+        uuid_str = None
+
     if clear:
         if not os.path.isdir(SESSIONS_DIR):
             console.print("No sessions to clear.")

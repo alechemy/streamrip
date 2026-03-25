@@ -140,30 +140,52 @@ class Track(Media):
         released as a single often has a working CDN path.  Both share
         the same ISRC (International Standard Recording Code).
         """
-        if self.client is None or self.client.source != "qobuz" or not self.meta.isrc:
+        if self.client is None or self.client.source != "qobuz":
+            logger.info(f"Skipping alternative search for '{self.meta.title}': no client or not qobuz")
+            return None
+        if not self.meta.isrc:
+            logger.info(f"Skipping alternative search for '{self.meta.title}': no ISRC")
             return None
 
         try:
             query = f"{self.meta.title} {self.meta.artist}"
+            logger.info(
+                f"Searching for alternative track: query='{query}', "
+                f"ISRC={self.meta.isrc}, explicit={self.meta.info.explicit}"
+            )
             pages = await self.client.search("track", query, limit=20)
+            candidates = 0
             for page in pages:
                 items = page.get("tracks", {}).get("items", [])
                 for item in items:
                     item_id = str(item["id"])
-                    if (
-                        item.get("isrc") == self.meta.isrc
-                        and item_id != self.meta.info.id
-                        and item.get("streamable", False)
-                        and item.get("parental_warning", False)
-                        == self.meta.info.explicit
-                    ):
-                        logger.info(
-                            f"Found alternative track {item_id} for "
-                            f"'{self.meta.title}' (ISRC: {self.meta.isrc})",
-                        )
-                        return item_id
+                    item_isrc = item.get("isrc")
+                    item_streamable = item.get("streamable", False)
+                    item_explicit = item.get("parental_warning", False)
+                    if item_isrc == self.meta.isrc and item_id != self.meta.info.id:
+                        candidates += 1
+                        if not item_streamable:
+                            logger.info(
+                                f"Alternative candidate {item_id} rejected: not streamable"
+                            )
+                        elif item_explicit != self.meta.info.explicit:
+                            logger.info(
+                                f"Alternative candidate {item_id} rejected: "
+                                f"explicit mismatch (track={self.meta.info.explicit}, "
+                                f"candidate={item_explicit})"
+                            )
+                        else:
+                            logger.info(
+                                f"Found alternative track {item_id} for "
+                                f"'{self.meta.title}' (ISRC: {self.meta.isrc})",
+                            )
+                            return item_id
+            logger.info(
+                f"No alternative found for '{self.meta.title}' "
+                f"(ISRC: {self.meta.isrc}, {candidates} ISRC match(es) rejected)"
+            )
         except Exception as e:
-            logger.debug(f"Alternative track search failed: {e}")
+            logger.warning(f"Alternative track search failed: {e}")
         return None
 
     async def postprocess(self):
