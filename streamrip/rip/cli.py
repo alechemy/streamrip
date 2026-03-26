@@ -535,7 +535,7 @@ async def resume(ctx, uuid_str, list_sessions, clear):
             try:
                 s = SessionState.load(sid)
                 n_failed = len(s.failed_track_ids)
-                reqs = ", ".join(s.original_requests) or "(none)"
+                reqs = ", ".join(r.split(" ", 2)[-1] for r in s.original_requests) or "(none)"
                 console.print(f"  [cyan]{sid}[/cyan]  {n_failed} failed track(s)  {reqs}")
             except Exception:
                 console.print(f"  [cyan]{sid}[/cyan]  (could not load)")

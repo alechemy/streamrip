@@ -141,6 +141,14 @@ class Track(Media):
         When album tracks have broken CDN entries, the same recording
         released as a single often has a working CDN path.  Both share
         the same ISRC (International Standard Recording Code).
+
+        A candidate must match all of the following criteria:
+        - Same ISRC as the original track
+        - Different track ID (not the same broken entry)
+        - Streamable
+        - Same parental_warning (explicit) flag
+        - Bit depth >= the original track's bit depth
+        - Sampling rate >= the original track's sampling rate
         """
         if self.client is None or self.client.source != "qobuz":
             logger.info(f"Skipping alternative search for '{self.meta.title}': no client or not qobuz")
@@ -164,6 +172,8 @@ class Track(Media):
                     item_isrc = item.get("isrc")
                     item_streamable = item.get("streamable", False)
                     item_explicit = item.get("parental_warning", False)
+                    item_bit_depth = item.get("maximum_bit_depth")
+                    item_sampling_rate = item.get("maximum_sampling_rate")
                     if item_isrc == self.meta.isrc and item_id != self.meta.info.id:
                         candidates += 1
                         if not item_streamable:
@@ -176,10 +186,30 @@ class Track(Media):
                                 f"explicit mismatch (track={self.meta.info.explicit}, "
                                 f"candidate={item_explicit})"
                             )
+                        elif (
+                            self.meta.info.bit_depth is not None
+                            and item_bit_depth is not None
+                            and item_bit_depth < self.meta.info.bit_depth
+                        ):
+                            logger.info(
+                                f"Alternative candidate {item_id} rejected: "
+                                f"bit depth {item_bit_depth} < {self.meta.info.bit_depth}"
+                            )
+                        elif (
+                            self.meta.info.sampling_rate is not None
+                            and item_sampling_rate is not None
+                            and item_sampling_rate < self.meta.info.sampling_rate
+                        ):
+                            logger.info(
+                                f"Alternative candidate {item_id} rejected: "
+                                f"sampling rate {item_sampling_rate} < {self.meta.info.sampling_rate}"
+                            )
                         else:
                             logger.info(
                                 f"Found alternative track {item_id} for "
-                                f"'{self.meta.title}' (ISRC: {self.meta.isrc})",
+                                f"'{self.meta.title}' (ISRC: {self.meta.isrc}, "
+                                f"bit_depth={item_bit_depth}, "
+                                f"sampling_rate={item_sampling_rate})",
                             )
                             return item_id
             logger.info(
